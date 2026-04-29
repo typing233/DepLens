@@ -455,6 +455,8 @@ class PythonParser(DependencyParser):
                         name = alias.name.split(".")[0]
                         imports.add(name.lower().replace("-", "_"))
                 elif isinstance(node, ast.ImportFrom):
+                    if node.level > 0:
+                        continue
                     if node.module:
                         name = node.module.split(".")[0]
                         imports.add(name.lower().replace("-", "_"))
