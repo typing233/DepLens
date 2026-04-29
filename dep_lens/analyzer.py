@@ -203,13 +203,30 @@ class DependencyAnalyzer:
             modules.add(normalized_name)
             modules.add(project_name.lower())
         
-        for item in self.project_path.iterdir():
-            if item.is_dir():
-                init_file = item / "__init__.py"
-                if init_file.exists():
-                    pkg_name = item.name.lower().replace("-", "_")
-                    modules.add(pkg_name)
-                    modules.add(item.name.lower())
+        def scan_directory(directory: Path, exclude_dirs: List[str] = None) -> None:
+            if exclude_dirs is None:
+                exclude_dirs = [
+                    "venv", ".venv", "env", ".env", "virtualenv",
+                    "node_modules", ".git", "__pycache__", "build", "dist",
+                    ".eggs", "*.egg-info", "tests", "test", "docs",
+                ]
+            
+            for item in directory.iterdir():
+                if item.is_dir():
+                    if item.name.startswith(".") or item.name in exclude_dirs:
+                        continue
+                    
+                    init_file = item / "__init__.py"
+                    py_files = list(item.glob("*.py"))
+                    
+                    if init_file.exists() or py_files:
+                        pkg_name = item.name.lower().replace("-", "_")
+                        modules.add(pkg_name)
+                        modules.add(item.name.lower())
+                    
+                    scan_directory(item, exclude_dirs)
+        
+        scan_directory(self.project_path)
         
         main_py = self.project_path / "main.py"
         if main_py.exists():
@@ -218,6 +235,10 @@ class DependencyAnalyzer:
         app_py = self.project_path / "app.py"
         if app_py.exists():
             modules.add("app")
+        
+        for py_file in self.project_path.glob("*.py"):
+            if py_file.name not in ["setup.py", "conftest.py", "__init__.py"]:
+                modules.add(py_file.stem.lower())
         
         return modules
 
@@ -241,26 +262,26 @@ class DependencyAnalyzer:
             except Exception:
                 pass
         
-        for item in self.project_path.iterdir():
-            if item.is_dir():
-                if item.name not in ["node_modules", ".git", "dist", "build"]:
-                    modules.add(item.name.lower())
-        
-        src_dir = self.project_path / "src"
-        if src_dir.exists() and src_dir.is_dir():
-            for item in src_dir.iterdir():
+        def scan_directory(directory: Path, exclude_dirs: List[str] = None) -> None:
+            if exclude_dirs is None:
+                exclude_dirs = [
+                    "node_modules", ".git", "dist", "build",
+                    "coverage", ".next", ".nuxt", ".cache",
+                ]
+            
+            for item in directory.iterdir():
                 if item.is_dir():
+                    if item.name.startswith(".") or item.name in exclude_dirs:
+                        continue
+                    
                     modules.add(item.name.lower())
-                elif item.is_file() and item.suffix in [".js", ".ts", ".jsx", ".tsx"]:
-                    modules.add(item.stem.lower())
+                    scan_directory(item, exclude_dirs)
+                elif item.is_file():
+                    if item.suffix in [".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs"]:
+                        if item.stem != "index":
+                            modules.add(item.stem.lower())
         
-        lib_dir = self.project_path / "lib"
-        if lib_dir.exists() and lib_dir.is_dir():
-            for item in lib_dir.iterdir():
-                if item.is_dir():
-                    modules.add(item.name.lower())
-                elif item.is_file() and item.suffix in [".js", ".ts", ".jsx", ".tsx"]:
-                    modules.add(item.stem.lower())
+        scan_directory(self.project_path)
         
         return modules
 
@@ -288,6 +309,25 @@ class DependencyAnalyzer:
             except Exception:
                 pass
         
+        def scan_directory(directory: Path, exclude_dirs: List[str] = None) -> None:
+            if exclude_dirs is None:
+                exclude_dirs = [
+                    "target", ".git", "node_modules",
+                ]
+            
+            for item in directory.iterdir():
+                if item.is_dir():
+                    if item.name.startswith(".") or item.name in exclude_dirs:
+                        continue
+                    
+                    modules.add(item.name.lower().replace("-", "_"))
+                    modules.add(item.name.lower())
+                    scan_directory(item, exclude_dirs)
+                elif item.is_file() and item.suffix == ".rs":
+                    if item.name not in ["main.rs", "lib.rs"]:
+                        modules.add(item.stem.lower().replace("-", "_"))
+                        modules.add(item.stem.lower())
+        
         src_dir = self.project_path / "src"
         if src_dir.exists() and src_dir.is_dir():
             main_rs = src_dir / "main.rs"
@@ -298,12 +338,7 @@ class DependencyAnalyzer:
             if lib_rs.exists():
                 modules.add("lib")
             
-            for item in src_dir.iterdir():
-                if item.is_dir():
-                    modules.add(item.name.lower())
-                elif item.is_file() and item.suffix == ".rs":
-                    if item.name not in ["main.rs", "lib.rs"]:
-                        modules.add(item.stem.lower())
+            scan_directory(src_dir)
         
         return modules
 
