@@ -144,12 +144,14 @@ class DependencyAnalyzer:
                     used_deps[imp_normalized].append(source_file)
 
         std_modules = self._get_standard_modules()
+        internal_modules = self._get_internal_modules()
         
         for dep_name, files in used_deps.items():
             dep_normalized = dep_name.lower().replace("-", "_")
             if (
                 dep_normalized not in declared_deps
                 and dep_normalized not in std_modules
+                and dep_normalized not in internal_modules
             ):
                 self._result.ghost_dependencies.append(
                     GhostDependency(
@@ -158,6 +160,152 @@ class DependencyAnalyzer:
                         severity="medium",
                     )
                 )
+
+    def _get_internal_modules(self) -> Set[str]:
+        if not self._detector or not self._parser:
+            return set()
+
+        project_type = self._detector.project_type
+        internal_modules: Set[str] = set()
+
+        if project_type == ProjectType.PYTHON:
+            internal_modules.update(self._get_python_internal_modules())
+        elif project_type == ProjectType.NODEJS:
+            internal_modules.update(self._get_nodejs_internal_modules())
+        elif project_type == ProjectType.RUST:
+            internal_modules.update(self._get_rust_internal_modules())
+        
+        return internal_modules
+
+    def _get_python_internal_modules(self) -> Set[str]:
+        modules: Set[str] = set()
+        
+        project_name = None
+        pyproject_toml = self.project_path / "pyproject.toml"
+        if pyproject_toml.exists():
+            try:
+                import tomllib
+                with open(pyproject_toml, "rb") as f:
+                    pyproject = tomllib.load(f)
+                
+                project_config = pyproject.get("project", {})
+                if project_config:
+                    project_name = project_config.get("name")
+                
+                poetry_config = pyproject.get("tool", {}).get("poetry", {})
+                if poetry_config and not project_name:
+                    project_name = poetry_config.get("name")
+            except Exception:
+                pass
+        
+        if project_name:
+            normalized_name = project_name.lower().replace("-", "_")
+            modules.add(normalized_name)
+            modules.add(project_name.lower())
+        
+        for item in self.project_path.iterdir():
+            if item.is_dir():
+                init_file = item / "__init__.py"
+                if init_file.exists():
+                    pkg_name = item.name.lower().replace("-", "_")
+                    modules.add(pkg_name)
+                    modules.add(item.name.lower())
+        
+        main_py = self.project_path / "main.py"
+        if main_py.exists():
+            modules.add("main")
+        
+        app_py = self.project_path / "app.py"
+        if app_py.exists():
+            modules.add("app")
+        
+        return modules
+
+    def _get_nodejs_internal_modules(self) -> Set[str]:
+        modules: Set[str] = set()
+        
+        package_json = self.project_path / "package.json"
+        if package_json.exists():
+            try:
+                import json
+                with open(package_json, "r", encoding="utf-8") as f:
+                    pkg = json.load(f)
+                
+                project_name = pkg.get("name")
+                if project_name:
+                    modules.add(project_name.lower())
+                    if project_name.startswith("@"):
+                        parts = project_name.split("/")
+                        if len(parts) >= 2:
+                            modules.add(parts[1].lower())
+            except Exception:
+                pass
+        
+        for item in self.project_path.iterdir():
+            if item.is_dir():
+                if item.name not in ["node_modules", ".git", "dist", "build"]:
+                    modules.add(item.name.lower())
+        
+        src_dir = self.project_path / "src"
+        if src_dir.exists() and src_dir.is_dir():
+            for item in src_dir.iterdir():
+                if item.is_dir():
+                    modules.add(item.name.lower())
+                elif item.is_file() and item.suffix in [".js", ".ts", ".jsx", ".tsx"]:
+                    modules.add(item.stem.lower())
+        
+        lib_dir = self.project_path / "lib"
+        if lib_dir.exists() and lib_dir.is_dir():
+            for item in lib_dir.iterdir():
+                if item.is_dir():
+                    modules.add(item.name.lower())
+                elif item.is_file() and item.suffix in [".js", ".ts", ".jsx", ".tsx"]:
+                    modules.add(item.stem.lower())
+        
+        return modules
+
+    def _get_rust_internal_modules(self) -> Set[str]:
+        modules: Set[str] = set()
+        
+        cargo_toml = self.project_path / "Cargo.toml"
+        if cargo_toml.exists():
+            try:
+                import tomllib
+                with open(cargo_toml, "rb") as f:
+                    cargo = tomllib.load(f)
+                
+                package = cargo.get("package", {})
+                project_name = package.get("name")
+                if project_name:
+                    modules.add(project_name.lower().replace("-", "_"))
+                    modules.add(project_name.lower())
+                
+                workspace = cargo.get("workspace", {})
+                workspace_members = workspace.get("members", [])
+                for member in workspace_members:
+                    member_name = member.replace("/", "_").replace("-", "_").lower()
+                    modules.add(member_name)
+            except Exception:
+                pass
+        
+        src_dir = self.project_path / "src"
+        if src_dir.exists() and src_dir.is_dir():
+            main_rs = src_dir / "main.rs"
+            if main_rs.exists():
+                modules.add("main")
+            
+            lib_rs = src_dir / "lib.rs"
+            if lib_rs.exists():
+                modules.add("lib")
+            
+            for item in src_dir.iterdir():
+                if item.is_dir():
+                    modules.add(item.name.lower())
+                elif item.is_file() and item.suffix == ".rs":
+                    if item.name not in ["main.rs", "lib.rs"]:
+                        modules.add(item.stem.lower())
+        
+        return modules
 
     def _get_standard_modules(self) -> Set[str]:
         if not self._detector:
